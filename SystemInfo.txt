@@ -1,0 +1,8 @@
+---SYSTEM INFORMATION---
+Total page frames in main memory: 8
+Page size: 16 byte(s)
+Page frames per process (or delta for WS): 4
+Lookahead/X: 4
+Minimum free pool size: 4
+Maximum free pool size: 8
+Number of processes: 3
