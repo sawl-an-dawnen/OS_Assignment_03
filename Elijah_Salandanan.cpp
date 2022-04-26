@@ -63,43 +63,41 @@ sem_t PRA_SEMA;
 //need smaphore for page replace algo to call on the disk driver
 sem_t DD_SEMA;
 
-
-
 int main(int argc, char** argv) {
 
     ifstream input(argv[1]);
     ofstream systemInfo("SystemInfo.txt");
-    sem_init(&PRA_SEMA, 0, 0);
-    sem_init(&DD_SEMA, 0, 0);
-    
+    {
+        int system[7];
+        //systemInfo data schema:
+        //0 tp//total number of page frames in main memory
+        //1 ps//page size in number of bytes
+        //2 r//number of page frames per process for FIFO, LRU, LRU-kth, LFU, OPT, or delta for WS
+        //3 x//lookahead window for OPT, X for LRU-xth or 0 for algorithms that don't use lookahead
+        //4 min//min free pool size;
+        //5 max//max free pool size;
+        //6 k//total number of processes
+        string data;
+        for (int i = 0; i < 7; i++) {
+            getline(input, data);
+            system[i] = stoi(data);
+        }
+        systemInfo << "---SYSTEM INFORMATION---\n";
+        systemInfo << "Total page frames in main memory: " << system[0] << endl;
+        systemInfo << "Page size: " << system[1] << " byte(s)\n";
+        systemInfo << "Page frames per process (or delta for WS): " << system[2] << endl;
+        systemInfo << "Lookahead/X: " << system[3] << endl;
+        systemInfo << "Minimum free pool size: " << system[4] << endl;
+        systemInfo << "Maximum free pool size: " << system[5] << endl;
+        systemInfo << "Number of processes: " << system[6] << endl;
+        //keep a list of imaginary processes and the number of faults they incur  {
 
-    int system[7];
-    //systemInfo data schema:
-    //0 tp//total number of page frames in main memory
-    //1 ps//page size in number of bytes
-    //2 r//number of page frames per process for FIFO, LRU, LRU-kth, LFU, OPT, or delta for WS
-    //3 x//lookahead window for OPT, X for LRU-xth or 0 for algorithms that don't use lookahead
-    //4 min//min free pool size;
-    //5 max//max free pool size;
-    //6 k//total number of processes
-    string data;
-    for (int i = 0; i < 7; i++) {
-        getline(input, data);
-        system[i] = stoi(data);
     }
-    systemInfo << "---SYSTEM INFORMATION---\n";
-    systemInfo << "Total page frames in main memory: " << system[0] << endl;
-    systemInfo << "Page size: " << system[1] << " byte(s)\n";
-    systemInfo << "Page frames per process (or delta for WS): " << system[2] << endl;
-    systemInfo << "Lookahead/X: " << system[3] << endl;
-    systemInfo << "Minimum free pool size: " << system[4] << endl;
-    systemInfo << "Maximum free pool size: " << system[5] << endl;
-    systemInfo << "Number of processes: " << system[6] << endl;
-    //keep a list of imaginary processes and the number of faults they incur
-
     int pnum = -1;
     int pid = -1;
-
+    sem_init(&PRA_SEMA, 1, 0);
+    sem_init(&DD_SEMA, 1, 0);
+    
     for (int i = 0; i < 3; i++) {
         pid = fork();
         if (pid == 0) {
@@ -113,8 +111,12 @@ int main(int argc, char** argv) {
 
     if (pid == 0 && pnum == 0) {
         cout << "PAGE FAULT HANDLER RUNNING\n";
-        cout << "PFH signal for PRA" << endl;
+        cout << "\nPFH signaling PRA\n\n";
         sem_post(&PRA_SEMA);
+        sem_post(&PRA_SEMA);
+        sem_post(&PRA_SEMA);
+        cout << "\nPFH signal for DD\n\n" << endl;
+        sem_post(&DD_SEMA);
         return 0;
     }
     //pageFaultHandler
@@ -134,11 +136,10 @@ int main(int argc, char** argv) {
         //terminate this process
 
     if (pid == 0 && pnum == 1) {
+        sem_wait(&DD_SEMA);
         cout << "DD process PRIMED" << endl;
-        while (DD_active) {
-            sem_wait(&DD_SEMA);
-            cout << "DISK DRIVER ACTIVE\n";
-        }
+        cout << "DISK DRIVER ACTIVE\n";
+        cout << "DD TERMINATE IMMINENT\n";
         sem_destroy(&DD_SEMA);
         return 0;
     }
@@ -152,11 +153,10 @@ int main(int argc, char** argv) {
         //treminate
     
     if (pid == 0 && pnum == 2)  {
+        sem_wait(&PRA_SEMA);
         cout << "PRA process PRIMED" << endl;
-        while(PRA_active) {
-            sem_wait(&PRA_SEMA);
-            cout << "PRA FIRING\n";
-        }
+        cout << "PRA FIRING\n";
+        cout << "PRA TERMINATNE IMMINENT\n";
         sem_destroy(&PRA_SEMA);
         return 0;
     }
