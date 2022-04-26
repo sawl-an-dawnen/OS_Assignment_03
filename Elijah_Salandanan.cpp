@@ -2,6 +2,7 @@
 #include <vector>
 #include <fstream>
 #include <unistd.h>
+#include <semaphore.h>
 
 
 using namespace std;
@@ -57,12 +58,20 @@ Page Replacement Stratigies:
 6.WS (working set)
 */
 
+//need semaphore for page fault handler to call on the page replacement algo
+sem_t PRA_SEMA;
+//need smaphore for page replace algo to call on the disk driver
+sem_t DD_SEMA;
+
 
 
 int main(int argc, char** argv) {
 
     ifstream input(argv[1]);
     ofstream systemInfo("SystemInfo.txt");
+    sem_init(&PRA_SEMA, 0, 0);
+    sem_init(&DD_SEMA, 0, 0);
+    
 
     int system[7];
     //systemInfo data schema:
@@ -88,9 +97,6 @@ int main(int argc, char** argv) {
     systemInfo << "Number of processes: " << system[6] << endl;
     //keep a list of imaginary processes and the number of faults they incur
 
-    //need semaphore for diskdriver
-    //need smaphore for page replace algo
-
     int pnum = -1;
     int pid = -1;
 
@@ -102,8 +108,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    bool DD_active = true;
+    bool PRA_active = true;
+
     if (pid == 0 && pnum == 0) {
-        cout << "im the page fault handler\n";
+        cout << "PAGE FAULT HANDLER RUNNING\n";
+        cout << "PFH signal for PRA" << endl;
+        sem_post(&PRA_SEMA);
         return 0;
     }
     //pageFaultHandler
@@ -123,7 +134,12 @@ int main(int argc, char** argv) {
         //terminate this process
 
     if (pid == 0 && pnum == 1) {
-        cout << "im the disk driver\n";
+        cout << "DD process PRIMED" << endl;
+        while (DD_active) {
+            sem_wait(&DD_SEMA);
+            cout << "DISK DRIVER ACTIVE\n";
+        }
+        sem_destroy(&DD_SEMA);
         return 0;
     }
     //diskDriver
@@ -136,7 +152,12 @@ int main(int argc, char** argv) {
         //treminate
     
     if (pid == 0 && pnum == 2)  {
-        cout << "im the page replacement algorithm\n";
+        cout << "PRA process PRIMED" << endl;
+        while(PRA_active) {
+            sem_wait(&PRA_SEMA);
+            cout << "PRA FIRING\n";
+        }
+        sem_destroy(&PRA_SEMA);
         return 0;
     }
     //pageReplacementAlgorithm
@@ -157,4 +178,5 @@ int main(int argc, char** argv) {
 /*
 References:
 1.https://github.com/MagedSaeed/vertual_memroy_manager/blob/master/main.c
+2.https://linuxize.com/post/how-to-install-gcc-compiler-on-ubuntu-18-04/ ---getting gcc working
 */
