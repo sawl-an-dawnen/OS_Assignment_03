@@ -3,8 +3,67 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <fcntl.h>
+#include <vector>
 
 using namespace std;
+
+struct process {
+    public:
+        bool active = true;
+        int pid = -1;
+        int pf = 0;//total page frames on disk
+        void print() {
+            cout << "PROCESS: " << pid << endl;
+            cout << "TOTAL PAGE FRAMES ON DISK: " << pf << endl;
+        }
+};
+
+struct request {
+    public:
+        int pid;
+        string address;
+        int binaryAddr;
+        int pn; //page number
+        int dis;//displacement
+        //will fill binaryaddr, pn, and dis
+        void initilize() {
+
+        }
+};
+
+const char* hex_char_to_bin(char c)
+{
+    // TODO handle default / error
+    switch(toupper(c))
+    {
+        case '0': return "0000";
+        case '1': return "0001";
+        case '2': return "0010";
+        case '3': return "0011";
+        case '4': return "0100";
+        case '5': return "0101";
+        case '6': return "0110";
+        case '7': return "0111";
+        case '8': return "1000";
+        case '9': return "1001";
+        case 'A': return "1010";
+        case 'B': return "1011";
+        case 'C': return "1100";
+        case 'D': return "1101";
+        case 'E': return "1110";
+        case 'F': return "1111";
+    }
+    return "-1";
+}
+
+string hex_str_to_bin_str(const string& hex)
+{
+    // TODO use a loop from <algorithm> or smth
+    string bin;
+    for(unsigned i = 0; i != hex.length(); ++i)
+       bin += hex_char_to_bin(hex[i]);
+    return bin;
+}
 
 //need semaphore for page fault handler to call on the page replacement algo
 const char *PRA_SEMA_NAME = "PRA";
@@ -41,11 +100,26 @@ int main(int argc, char** argv) {
         systemInfo << "Maximum free pool size: " << system[5] << endl;
         systemInfo << "Number of processes: " << system[6] << endl;
         //keep a list of imaginary processes and the number of faults they incur  {
-
-        while (getline(input, data)) {
-            cout << data << endl;
+        
+        vector<process> processes;
+        for (int i = 0; i < system[6]; i++) {
+            process temp;
+            getline(input, data);
+            temp.pid = stoi(data.substr(0,data.find(" ")));
+            temp.pf = stoi(data.substr(data.find(" ")));
+            processes.push_back(temp);
+            temp.print();
+            cout << endl;
         }
 
+        while (getline(input, data)) {
+            request temp;
+            temp.pid = stoi(data.substr(0,data.find(" ")));
+            temp.address = data.substr(data.find(" ")+1);
+            cout << temp.address << endl;
+            temp.binaryAddr = stoi(hex_str_to_bin_str(temp.address.substr(2)));
+            cout << temp.binaryAddr << endl << endl;
+        }
     }
 
     bool DD_active = true;
@@ -119,12 +193,14 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-
     return 0;
 }
 
 /*
 References:
 1.https://github.com/MagedSaeed/vertual_memroy_manager/blob/master/main.c
-2.https://linuxize.com/post/how-to-install-gcc-compiler-on-ubuntu-18-04/ ---getting gcc working
+2.https://linuxize.com/post/how-to-install-gcc-compiler-on-ubuntu-18-04/ 
+---getting gcc working
+3.https://stackoverflow.com/questions/18310952/convert-strings-between-hex-format-and-binary-format#:~:text=You%20can%20use%20a%20combination%20of%20std%3A%3Astringstream%2C%20std%3A%3Ahex,hex%20and%20binary%20in%20C%2B%2B03.%20Here%27s%20an%20example%3A?msclkid=a74ff812c6a711eca18a767da44e484b
+---to get hex to binary functions
 */
