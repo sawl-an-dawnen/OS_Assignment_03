@@ -4,6 +4,7 @@
 #include <semaphore.h>
 #include <fcntl.h>
 #include <vector>
+#include <cmath>
 
 using namespace std;
 
@@ -12,22 +13,31 @@ struct process {
         bool active = true;
         int pid = -1;
         int pf = 0;//total page frames on disk
-        void print() {
-            cout << "PROCESS: " << pid << endl;
-            cout << "TOTAL PAGE FRAMES ON DISK: " << pf << endl;
-        }
+        vector<string> pageTable;
+        void print(ofstream &output) {
+            output << "PROCESS: " << pid << endl;
+            output << "TOTAL PAGE FRAMES ON DISK: " << pf << endl;
+            output << "PAGE TABLE CONTENTS: [";
+            for (int i = 0; i < pageTable.size(); i++) {
+                output << pageTable[i];
+                if (i < pageTable.size()-1) {
+                    output << ",";
+                }
+            }
+            output << "]" << endl;
+        }      
 };
 
 struct request {
     public:
         int pid;
         string address;
-        int binaryAddr;
-        int pn; //page number
-        int dis;//displacement
-        //will fill binaryaddr, pn, and dis
-        void initilize() {
-
+        string binaryAddr;
+        int pn_bits; //number of bits representing page number
+        int dis_bits;//number of bits represeting displacement
+        int pn_dec;
+        int dis_dec;
+        void print(ofstream &output) {
         }
 };
 
@@ -52,10 +62,9 @@ const char* hex_char_to_bin(char c)
         case 'D': return "1101";
         case 'E': return "1110";
         case 'F': return "1111";
+        default: return "";
     }
-    return "-1";
 }
-
 string hex_str_to_bin_str(const string& hex)
 {
     // TODO use a loop from <algorithm> or smth
@@ -63,6 +72,26 @@ string hex_str_to_bin_str(const string& hex)
     for(unsigned i = 0; i != hex.length(); ++i)
        bin += hex_char_to_bin(hex[i]);
     return bin;
+}
+int bin_to_dec(int n)
+{
+    int num = n;
+    int dec_value = 0;
+ 
+    // Initializing base value to 1, i.e 2^0
+    int base = 1;
+ 
+    int temp = num;
+    while (temp) {
+        int last_digit = temp % 10;
+        temp = temp / 10;
+ 
+        dec_value += last_digit * base;
+ 
+        base = base * 2;
+    }
+ 
+    return dec_value;
 }
 
 //need semaphore for page fault handler to call on the page replacement algo
@@ -79,8 +108,8 @@ int main(int argc, char** argv) {
         ofstream systemInfo("SystemInfo.txt");
         int system[7];
         //system array schema:
-        //0 tp total number of page frames in main memory
-        //1 ps page size in number of bytes
+        //0 tp total number of page frames in main memory - page frames you can have in main memory at a time
+        //1 ps page size in number of bytes - ceillogbase2 gives dispalcement/offset 
         //2 r number of page frames per process for FIFO, LRU, LRU-kth, LFU, OPT, or delta for WS
         //3 x lookahead window for OPT, X for LRU-xth or 0 for algorithms that don't use lookahead
         //4 min min free pool size;
@@ -102,26 +131,46 @@ int main(int argc, char** argv) {
         //keep a list of imaginary processes and the number of faults they incur  {
         
         vector<process> processes;
+        systemInfo << "\n---PROCESS INFO---\n";
         for (int i = 0; i < system[6]; i++) {
             process temp;
             getline(input, data);
             temp.pid = stoi(data.substr(0,data.find(" ")));
-            temp.pf = stoi(data.substr(data.find(" ")));
+            temp.pf = stoi(data.substr(data.find(" ")));//take ceillogbase2 to get the page number
+            for (int j = 0; j < system[2]; j++) {
+                temp.pageTable.push_back("EMPTY");
+            }
             processes.push_back(temp);
-            temp.print();
-            cout << endl;
+            temp.print(systemInfo);
         }
 
+        systemInfo << "\n---REQUESTS---\n";
         while (getline(input, data)) {
             request temp;
             temp.pid = stoi(data.substr(0,data.find(" ")));
             temp.address = data.substr(data.find(" ")+1);
-            cout << temp.address << endl;
-            temp.binaryAddr = stoi(hex_str_to_bin_str(temp.address.substr(2)));
-            cout << temp.binaryAddr << endl << endl;
+            temp.binaryAddr = hex_str_to_bin_str(temp.address.substr(2));
+            cout << temp.binaryAddr << endl;
+            if (temp.binaryAddr == "") {
+                cout << "PROCESS TERMINATED..." << endl << endl;
+                continue;
+            }
+            for (int i = 0; i < processes.size(); i++) {
+                if(temp.pid == processes[i].pid) {
+                    temp.pn_bits = ceil(log2(processes[i].pf));
+                    temp.dis_bits = ceil(log2(system[1]));
+                    cout << stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits)) << endl;
+                    cout << stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits-temp.pn_bits,temp.pn_bits)) << endl;
+                    temp.dis_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits)));
+                    temp.pn_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits-temp.pn_bits,temp.pn_bits)));
+                    cout << "PAGE NUMBER: " << temp.pn_dec << endl;
+                    cout << "OFFSET: " << temp.dis_dec << endl;
+                }
+            }
         }
     }
 
+    //create processes with fork()
     bool DD_active = true;
     bool PRA_active = true;
     int pnum = -1;
@@ -153,6 +202,8 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 0) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
+        sem_close(PFH_SEMA);
+        sem_close(PRA_SEMA);
         //cout << "PAGE FAULT HANDLER RUNNING\n";
         return 0;
     }
@@ -169,6 +220,8 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 1) {
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
+        sem_close(DD_SEMA);
+        sem_close(PRA_SEMA);
         sem_wait(DD_SEMA);
         return 0;
     }
@@ -189,6 +242,9 @@ int main(int argc, char** argv) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
+        sem_close(PFH_SEMA);
+        sem_close(PRA_SEMA);
+        sem_close(DD_SEMA);
         sem_wait(PRA_SEMA);
         return 0;
     }
@@ -203,4 +259,6 @@ References:
 ---getting gcc working
 3.https://stackoverflow.com/questions/18310952/convert-strings-between-hex-format-and-binary-format#:~:text=You%20can%20use%20a%20combination%20of%20std%3A%3Astringstream%2C%20std%3A%3Ahex,hex%20and%20binary%20in%20C%2B%2B03.%20Here%27s%20an%20example%3A?msclkid=a74ff812c6a711eca18a767da44e484b
 ---to get hex to binary functions
+4.https://www.geeksforgeeks.org/program-binary-decimal-conversion/
+---to get binary ro decimal
 */
