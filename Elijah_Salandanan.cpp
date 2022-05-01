@@ -5,21 +5,34 @@
 #include <fcntl.h>
 #include <vector>
 #include <cmath>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 
 using namespace std;
+
+struct frame {
+    bool empty = true;
+    int pid = -1;
+    int page =-1;
+};
 
 struct process {
     public:
         bool active = true;
         int pid = -1;
         int pf = 0;//total page frames on disk
-        vector<string> pageTable;
+        vector<frame> pageTable;
         void print(ofstream &output) {
             output << "PROCESS: " << pid << endl;
             output << "TOTAL PAGE FRAMES ON DISK: " << pf << endl;
             output << "PAGE TABLE CONTENTS: [";
             for (int i = 0; i < pageTable.size(); i++) {
-                output << pageTable[i];
+                if (pageTable[i].empty == true) {
+                    output << "EMPTY";
+                }
+                else {
+                    output << pageTable[i].pid << " - " << pageTable[i].page;
+                }
                 if (i < pageTable.size()-1) {
                     output << ",";
                 }
@@ -39,6 +52,14 @@ struct request {
         int dis_dec;
         void print(ofstream &output) {
         }
+};
+
+struct shmseg {
+    int testVariable;
+    int systemData[7];
+    vector<process> processes();
+    vector<request> requests();
+    vector<frame> frameTable;
 };
 
 const char* hex_char_to_bin(char c)
@@ -101,12 +122,18 @@ const char *DD_SEMA_NAME = "DD";
 //need semaphore to pause PFA
 const char *PFH_SEMA_NAME = "PFH";
 
+key_t key = ftok("shmfile",65);
+int shmid = shmget(key, sizeof(struct shmseg), 0664|IPC_CREAT);
+struct shmseg *shmp = (shmseg*)shmat(shmid, NULL, 0);
+
 int main(int argc, char** argv) {
     //input handler
     {
         ifstream input(argv[1]);
         ofstream systemInfo("SystemInfo.txt");
-        int system[7];
+
+        shmseg segmentProxy;
+
         //system array schema:
         //0 tp total number of page frames in main memory - page frames you can have in main memory at a time
         //1 ps page size in number of bytes - ceillogbase2 gives dispalcement/offset 
@@ -118,53 +145,48 @@ int main(int argc, char** argv) {
         string data;
         for (int i = 0; i < 7; i++) {
             getline(input, data);
-            system[i] = stoi(data);
+            segmentProxy.systemData[i] = stoi(data);
         }
         systemInfo << "---SYSTEM INFORMATION---\n";
-        systemInfo << "Total page frames in main memory: " << system[0] << endl;
-        systemInfo << "Page size: " << system[1] << " byte(s)\n";
-        systemInfo << "Page frames per process (or delta for WS): " << system[2] << endl;
-        systemInfo << "Lookahead/X: " << system[3] << endl;
-        systemInfo << "Minimum free pool size: " << system[4] << endl;
-        systemInfo << "Maximum free pool size: " << system[5] << endl;
-        systemInfo << "Number of processes: " << system[6] << endl;
-        //keep a list of imaginary processes and the number of faults they incur  {
-        
-        vector<process> processes;
+        systemInfo << "Total page frames in main memory: " << segmentProxy.systemData[0] << endl;
+        systemInfo << "Page size: " << segmentProxy.systemData[1] << " byte(s)\n";
+        systemInfo << "Page frames per process (or delta for WS): " << segmentProxy.systemData[2] << endl;
+        systemInfo << "Lookahead/X: " << segmentProxy.systemData[3] << endl;
+        systemInfo << "Minimum free pool size: " << segmentProxy.systemData[4] << endl;
+        systemInfo << "Maximum free pool size: " << segmentProxy.systemData[5] << endl;
+        systemInfo << "Number of processes: " << segmentProxy.systemData[6] << endl;
         systemInfo << "\n---PROCESS INFO---\n";
-        for (int i = 0; i < system[6]; i++) {
-            process temp;
+
+        for (int i = 0; i < segmentProxy.systemData[6]; i++) {
+            process* temp = new process;
+            frame temp_f;
             getline(input, data);
-            temp.pid = stoi(data.substr(0,data.find(" ")));
-            temp.pf = stoi(data.substr(data.find(" ")));//take ceillogbase2 to get the page number
-            for (int j = 0; j < system[2]; j++) {
-                temp.pageTable.push_back("EMPTY");
+            temp->pid = stoi(data.substr(0,data.find(" ")));
+            temp->pf = stoi(data.substr(data.find(" ")));//take ceillogbase2 to get the page number
+            for (int j = 0; j < segmentProxy.systemData[2]; j++) {
+                temp->pageTable.push_back(temp_f);
             }
-            processes.push_back(temp);
-            temp.print(systemInfo);
+            segmentProxy.processes->push_back(*temp);
+            temp->print(systemInfo);
         }
 
         systemInfo << "\n---REQUESTS---\n";
         while (getline(input, data)) {
-            request temp;
-            temp.pid = stoi(data.substr(0,data.find(" ")));
-            temp.address = data.substr(data.find(" ")+1);
-            temp.binaryAddr = hex_str_to_bin_str(temp.address.substr(2));
-            cout << temp.binaryAddr << endl;
-            if (temp.binaryAddr == "") {
-                cout << "PROCESS TERMINATED..." << endl << endl;
+            request* temp = new request;
+            temp->pid = stoi(data.substr(0,data.find(" ")));
+            temp->address = data.substr(data.find(" ")+1);
+            temp->binaryAddr = hex_str_to_bin_str(temp->address.substr(2));
+            if (temp->binaryAddr == "") {
+                //cout << "PROCESS TERMINATED..." << endl << endl;
                 continue;
             }
-            for (int i = 0; i < processes.size(); i++) {
-                if(temp.pid == processes[i].pid) {
-                    temp.pn_bits = ceil(log2(processes[i].pf));
-                    temp.dis_bits = ceil(log2(system[1]));
-                    cout << stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits)) << endl;
-                    cout << stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits-temp.pn_bits,temp.pn_bits)) << endl;
-                    temp.dis_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits)));
-                    temp.pn_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits-temp.pn_bits,temp.pn_bits)));
-                    cout << "PAGE NUMBER: " << temp.pn_dec << endl;
-                    cout << "OFFSET: " << temp.dis_dec << endl;
+            for (int i = 0; i < segmentProxy->processes.size(); i++) {
+                if(temp->pid == shmp->processes[i].pid) {
+                    temp->pn_bits = ceil(log2(segmentProxy.processes[i].pf));
+                    temp->dis_bits = ceil(log2(shmp->systemData[1]));
+                    temp->dis_dec = bin_to_dec(stoi(temp->binaryAddr.substr(temp->binaryAddr.size()-temp->dis_bits)));
+                    temp->pn_dec = bin_to_dec(stoi(temp->binaryAddr.substr(temp->binaryAddr.size()-temp->dis_bits-temp->pn_bits,temp->pn_bits)));
+                    shmp->requests.push_back(*temp);
                 }
             }
         }
@@ -245,10 +267,8 @@ int main(int argc, char** argv) {
         sem_close(PFH_SEMA);
         sem_close(PRA_SEMA);
         sem_close(DD_SEMA);
-        sem_wait(PRA_SEMA);
         return 0;
     }
-
     return 0;
 }
 
@@ -261,4 +281,6 @@ References:
 ---to get hex to binary functions
 4.https://www.geeksforgeeks.org/program-binary-decimal-conversion/
 ---to get binary ro decimal
+https://www.geeksforgeeks.org/ipc-shared-memory/
+---to get shared memory learned
 */
