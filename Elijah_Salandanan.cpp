@@ -10,34 +10,14 @@
 
 using namespace std;
 
-struct frame {
-    bool empty = true;
-    int pid = -1;
-    int page =-1;
-};
-
 struct process {
     public:
         bool active = true;
         int pid = -1;
         int pf = 0;//total page frames on disk
-        vector<frame> pageTable;
         void print(ofstream &output) {
             output << "PROCESS: " << pid << endl;
             output << "TOTAL PAGE FRAMES ON DISK: " << pf << endl;
-            output << "PAGE TABLE CONTENTS: [";
-            for (int i = 0; i < pageTable.size(); i++) {
-                if (pageTable[i].empty == true) {
-                    output << "EMPTY";
-                }
-                else {
-                    output << pageTable[i].pid << " - " << pageTable[i].page;
-                }
-                if (i < pageTable.size()-1) {
-                    output << ",";
-                }
-            }
-            output << "]" << endl;
         }      
 };
 
@@ -52,14 +32,6 @@ struct request {
         int dis_dec;
         void print(ofstream &output) {
         }
-};
-
-struct shmseg {
-    int testVariable;
-    int systemData[7];
-    vector<process> processes();
-    vector<request> requests();
-    vector<frame> frameTable;
 };
 
 const char* hex_char_to_bin(char c)
@@ -122,75 +94,134 @@ const char *DD_SEMA_NAME = "DD";
 //need semaphore to pause PFA
 const char *PFH_SEMA_NAME = "PFH";
 
-key_t key = ftok("shmfile",65);
-int shmid = shmget(key, sizeof(struct shmseg), 0664|IPC_CREAT);
-struct shmseg *shmp = (shmseg*)shmat(shmid, NULL, 0);
-
 int main(int argc, char** argv) {
     //input handler
-    {
-        ifstream input(argv[1]);
-        ofstream systemInfo("SystemInfo.txt");
+    ifstream input(argv[1]);
+    ofstream systemInfo("SystemInfo.txt");
+    int systemData[7];
+    vector<process> processes;
+    vector<request> requests;
 
-        shmseg segmentProxy;
+    //system array schema:
+    //0 tp total number of page frames in main memory - page frames you can have in main memory at a time
+    //1 ps page size in number of bytes - ceillogbase2 gives dispalcement/offset 
+    //2 r number of page frames per process for FIFO, LRU, LRU-kth, LFU, OPT, or delta for WS
+    //3 x lookahead window for OPT, X for LRU-xth or 0 for algorithms that don't use lookahead
+    //4 min min free pool size;
+    //5 max max free pool size;
+    //6 k total number of processes
+    string data;
+    for (int i = 0; i < 7; i++) {
+        getline(input, data);
+        systemData[i] = stoi(data);
+    }
+    systemInfo << "---SYSTEM INFORMATION---\n";
+    systemInfo << "Total page frames in main memory: " << systemData[0] << endl;
+    systemInfo << "Page size: " << systemData[1] << " byte(s)\n";
+    systemInfo << "Page frames per process (or delta for WS): " << systemData[2] << endl;
+    systemInfo << "Lookahead/X: " << systemData[3] << endl;
+    systemInfo << "Minimum free pool size: " << systemData[4] << endl;
+    systemInfo << "Maximum free pool size: " << systemData[5] << endl;
+    systemInfo << "Number of processes: " << systemData[6] << endl;
 
-        //system array schema:
-        //0 tp total number of page frames in main memory - page frames you can have in main memory at a time
-        //1 ps page size in number of bytes - ceillogbase2 gives dispalcement/offset 
-        //2 r number of page frames per process for FIFO, LRU, LRU-kth, LFU, OPT, or delta for WS
-        //3 x lookahead window for OPT, X for LRU-xth or 0 for algorithms that don't use lookahead
-        //4 min min free pool size;
-        //5 max max free pool size;
-        //6 k total number of processes
-        string data;
-        for (int i = 0; i < 7; i++) {
-            getline(input, data);
-            segmentProxy.systemData[i] = stoi(data);
+    systemInfo << "\n---PROCESS INFO---\n";
+    for (int i = 0; i < systemData[6]; i++) {
+        process temp;
+        getline(input, data);
+        temp.pid = stoi(data.substr(0,data.find(" ")));
+        temp.pf = stoi(data.substr(data.find(" ")));//take ceillogbase2 to get the page number
+        processes.push_back(temp);
+        temp.print(systemInfo);
+    }
+
+    systemInfo << "\n---REQUESTS---\n";
+    while (getline(input, data)) {
+        request temp;
+        temp.pid = stoi(data.substr(0,data.find(" ")));
+        temp.address = data.substr(data.find(" ")+1);
+        temp.binaryAddr = hex_str_to_bin_str(temp.address.substr(2));
+        if (temp.binaryAddr == "") {
+                temp.address = "";
+                temp.binaryAddr = "";
+                temp.pn_bits = -1;
+                temp.dis_bits = -1;
+                temp.dis_dec = -1;
+                temp.pn_dec = -1;
+                requests.push_back(temp);
+            continue;
         }
-        systemInfo << "---SYSTEM INFORMATION---\n";
-        systemInfo << "Total page frames in main memory: " << segmentProxy.systemData[0] << endl;
-        systemInfo << "Page size: " << segmentProxy.systemData[1] << " byte(s)\n";
-        systemInfo << "Page frames per process (or delta for WS): " << segmentProxy.systemData[2] << endl;
-        systemInfo << "Lookahead/X: " << segmentProxy.systemData[3] << endl;
-        systemInfo << "Minimum free pool size: " << segmentProxy.systemData[4] << endl;
-        systemInfo << "Maximum free pool size: " << segmentProxy.systemData[5] << endl;
-        systemInfo << "Number of processes: " << segmentProxy.systemData[6] << endl;
-        systemInfo << "\n---PROCESS INFO---\n";
-
-        for (int i = 0; i < segmentProxy.systemData[6]; i++) {
-            process* temp = new process;
-            frame temp_f;
-            getline(input, data);
-            temp->pid = stoi(data.substr(0,data.find(" ")));
-            temp->pf = stoi(data.substr(data.find(" ")));//take ceillogbase2 to get the page number
-            for (int j = 0; j < segmentProxy.systemData[2]; j++) {
-                temp->pageTable.push_back(temp_f);
-            }
-            segmentProxy.processes->push_back(*temp);
-            temp->print(systemInfo);
-        }
-
-        systemInfo << "\n---REQUESTS---\n";
-        while (getline(input, data)) {
-            request* temp = new request;
-            temp->pid = stoi(data.substr(0,data.find(" ")));
-            temp->address = data.substr(data.find(" ")+1);
-            temp->binaryAddr = hex_str_to_bin_str(temp->address.substr(2));
-            if (temp->binaryAddr == "") {
-                //cout << "PROCESS TERMINATED..." << endl << endl;
-                continue;
-            }
-            for (int i = 0; i < segmentProxy->processes.size(); i++) {
-                if(temp->pid == shmp->processes[i].pid) {
-                    temp->pn_bits = ceil(log2(segmentProxy.processes[i].pf));
-                    temp->dis_bits = ceil(log2(shmp->systemData[1]));
-                    temp->dis_dec = bin_to_dec(stoi(temp->binaryAddr.substr(temp->binaryAddr.size()-temp->dis_bits)));
-                    temp->pn_dec = bin_to_dec(stoi(temp->binaryAddr.substr(temp->binaryAddr.size()-temp->dis_bits-temp->pn_bits,temp->pn_bits)));
-                    shmp->requests.push_back(*temp);
-                }
+        for (int i = 0; i < processes.size(); i++) {
+            if(temp.pid == processes[i].pid) {
+                temp.pn_bits = ceil(log2(processes[i].pf));
+                temp.dis_bits = ceil(log2(systemData[1]));
+                temp.dis_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits)));
+                temp.pn_dec = bin_to_dec(stoi(temp.binaryAddr.substr(temp.binaryAddr.size()-temp.dis_bits-temp.pn_bits,temp.pn_bits)));
+                requests.push_back(temp);
             }
         }
     }
+    for (int i = 0; i < requests.size(); i ++) {
+        if (requests[i].pn_dec == -1) {
+            systemInfo << "---REQUEST #" << i << "---" << endl;
+            systemInfo << "PROCESS " << requests[i].pid << " STAGED FOR TERMINATION" << endl;
+            systemInfo << endl;
+            continue; 
+        }
+        systemInfo << "---REQUEST #" << i << "---" << endl;
+        systemInfo << "PID: " << requests[i].pid << endl;
+        systemInfo << "PAGE NUMBER: " << requests[i].pn_dec << endl;
+        systemInfo << "DISPLACEMENT: " << requests[i].dis_dec << endl;
+        systemInfo << endl;
+    }
+    
+    key_t key_ft = ftok("shmfile",65);
+    int shmid_ft;
+    int* frameTable;
+    int count_ft = systemData[0]*2;
+    shmid_ft = shmget(key_ft, count_ft*sizeof(int), 0644|IPC_CREAT);
+    frameTable = (int*)shmat(shmid_ft,0,0);
+    for (int i = 0; i < count_ft; i++) {
+        frameTable[i] = -1;
+    }
+
+    key_t key_pgt;
+    int shmid_pgt;
+    int* pageTables;
+    int count_pgt = systemData[6]*systemData[2]*2;
+    shmid_pgt = shmget(key_pgt, count_pgt*sizeof(int), 0644|IPC_CREAT);
+    pageTables = (int*)shmat(shmid_pgt,0,0);
+    for (int i = 0; i < count_pgt; i++) {
+        pageTables[i] = -1;
+    }
+
+    for (int i = 0; i < systemData[6]; i++) {
+        for (int j = 0; j < systemData[2]*2; j = j+2) {
+            pageTables[i+j] = processes[i].pid;
+        }
+    }
+
+    for (int i = 0; i < processes.size(); i++) {
+        cout << pageTables[i] << " ";
+    }
+    cout << endl;
+
+
+    key_t key_flt;
+    int shmid_flt;
+    int* faultTracker;
+    int count_flt = systemData[6]+1;
+    shmid_flt = shmget(key_flt, count_flt*sizeof(int), 0644|IPC_CREAT);
+    faultTracker = (int*)shmat(shmid_flt,0,0);
+    for (int i = 0; i < count_pgt; i++) {
+        faultTracker[i] = 0;
+    }
+
+    key_t key_instr;
+    int shmid_instr;
+    int* currentInstruction;
+    shmid_instr = shmget(key_instr, sizeof(int), 0644|IPC_CREAT);
+    currentInstruction = (int*)shmat(shmid_instr,0,0);
+    *currentInstruction = 0;
 
     //create processes with fork()
     bool DD_active = true;
@@ -224,9 +255,13 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 0) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
-        sem_close(PFH_SEMA);
-        sem_close(PRA_SEMA);
-        //cout << "PAGE FAULT HANDLER RUNNING\n";
+        for (int i = 0; i < requests.size(); i++)   {
+            *currentInstruction = i;
+            requests[i];
+
+        }
+        sem_post(PRA_SEMA);
+        sem_wait(PFH_SEMA);
         return 0;
     }
 
@@ -242,9 +277,6 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 1) {
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
-        sem_close(DD_SEMA);
-        sem_close(PRA_SEMA);
-        sem_wait(DD_SEMA);
         return 0;
     }
 
@@ -264,9 +296,8 @@ int main(int argc, char** argv) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
-        sem_close(PFH_SEMA);
-        sem_close(PRA_SEMA);
-        sem_close(DD_SEMA);
+        sem_wait(PRA_SEMA);
+        sem_post(PFH_SEMA);
         return 0;
     }
     return 0;
@@ -283,4 +314,6 @@ References:
 ---to get binary ro decimal
 https://www.geeksforgeeks.org/ipc-shared-memory/
 ---to get shared memory learned
+5.https://stackoverflow.com/questions/21227270/read-write-integer-array-into-shared-memory#:~:text=array%20%3D%20%28int%20%2A%29shmat%20%28shmid%2C%200%2C%200%29%3B%20array,you%20cant%20allocate%20it%20later%20by%20other%20means.
+---shared memory array
 */
