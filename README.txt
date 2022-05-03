@@ -15,7 +15,10 @@ get them into my code
 notes 4/27/2022
 -finally completley worked out how to share and use semaphores between processes 5:41PM, bruh i just want to design games why do i need semaphores
 
--notes 4/28/2022
+notes 4/28/2022
+
+notes 5/3/2022
+-working on getting semaphores to work with recieving instructions
 
 ---HW INSTRUCTIONS---
 //there is one page table per address space (process)

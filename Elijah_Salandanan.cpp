@@ -177,7 +177,7 @@ int main(int argc, char** argv) {
 
     //frame table. there are double the number of indexes as there are dedicated frames in the system. two indexes per frame. first index represents
     //the pid and the next index represents the page number loaded into main memory
-    key_t key_ft = ftok("shmfile",65);
+    key_t key_ft;
     int shmid_ft;
     int* frameTable;
     int count_ft = systemData[0]*2;
@@ -229,10 +229,10 @@ int main(int argc, char** argv) {
 
     key_t key_kill;
     int shmid_kill;
-    bool* killSwitch;
-    shmid_kill = shmget(key_kill, sizeof(bool), 0644|IPC_CREAT);
-    killSwitch = (bool*)shmat(shmid_kill,0,0);
-    *killSwitch = false;
+    int* killSwitch;
+    shmid_kill = shmget(key_kill, sizeof(int), 0644|IPC_CREAT);
+    killSwitch = (int*)shmat(shmid_kill,0,0);
+    *killSwitch = 1;
 
     //create processes with fork()
     int pnum = -1;
@@ -266,6 +266,8 @@ int main(int argc, char** argv) {
         for (int i = 0; i < requests.size(); i++)   {
             *currentInstruction = i;
             cout << *currentInstruction << " ";
+            //sem_post(PRA_SEMA);
+            //sem_wait(PFH_SEMA);
             requestPid = requests[i].pid; 
             requestPageNumber = requests[i].pn_dec;
             if (requestPageNumber == -1) {
@@ -274,7 +276,9 @@ int main(int argc, char** argv) {
                 continue;
             }
             for (int j = 0; j < count_ft; j = j + 2)//search for pid
-            {
+            {   
+
+                /*
                 if(frameTable[j] == requestPid) {//pid exists
                     if (frameTable[j+1] == requestPageNumber)  {//check to see if corresponding page number matches, if yes then no fault
                     break;//page is loaded into memory, no fault, break to next request
@@ -290,10 +294,14 @@ int main(int argc, char** argv) {
                     sem_wait(PFH_SEMA);//wait this process
                     }
                 }
+                */
             }
         }
-        *killSwitch == true;// need to make this a shared variable so we can signal to the PRA AND DD one final time to terminate these processes
-        
+        cout << endl << endl;
+        cout << *killSwitch << endl;
+        cout << "ENABLING KILLSWITCH: ";
+        *killSwitch = 0;// need to make this a shared variable so we can signal to the PRA AND DD one final time to terminate these processes
+        cout << *killSwitch << endl;
         return 0;
     }
 
@@ -309,6 +317,7 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 1) {
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
+        sem_wait(DD_SEMA);
         return 0;
     }
 
@@ -328,7 +337,15 @@ int main(int argc, char** argv) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
-        //cout << "---PAGE REPLACEMENT ALGORITHM ONLINE---" << endl;
+        ofstream pageReplacementLog("PageReplacementLog.txt");
+        pageReplacementLog << "---PAGE REPLACEMENT ALGORITHM ONLINE---" << endl;
+        sem_wait(PRA_SEMA);
+        while(*killSwitch == 1) {
+            pageReplacementLog << *currentInstruction << endl;
+            sem_post(PFH_SEMA);
+            sem_wait(PRA_SEMA);
+        }
+
         //sem_wait(PRA_SEMA);
         /*
         while(!*killSwitch){
