@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
     //input handler
     ifstream input(argv[1]);
     ofstream systemInfo("SystemInfo.txt");
+    ofstream faultSup("FaultSupervisor.txt");
     int systemData[7];
     vector<process> processes;
     vector<request> requests;
@@ -173,7 +174,9 @@ int main(int argc, char** argv) {
         systemInfo << "DISPLACEMENT: " << requests[i].dis_dec << endl;
         systemInfo << endl;
     }
-    
+
+    //frame table. there are double the number of indexes as there are dedicated frames in the system. two indexes per frame. first index represents
+    //the pid and the next index represents the page number loaded into main memory
     key_t key_ft = ftok("shmfile",65);
     int shmid_ft;
     int* frameTable;
@@ -184,38 +187,39 @@ int main(int argc, char** argv) {
         frameTable[i] = -1;
     }
 
+    //page tables for each process. the page table has enough indexes to support the required number of frames per process times two.
+    //first index represents the process and the following index represents the page loaded into memory.
+    //for example: say each process has three frames, and there are two processes. there will be 12 indexes. the first 6 indexes will be allocated
+    //to the first process. index 0 and 1 are used to record a frame, index 2 and 4 will be used to record frame 2, and so on. starting at frame 6
+    //and 7 that will start recording the information of the second process
     key_t key_pgt;
     int shmid_pgt;
     int* pageTables;
     int count_pgt = systemData[6]*systemData[2]*2;
     shmid_pgt = shmget(key_pgt, count_pgt*sizeof(int), 0644|IPC_CREAT);
     pageTables = (int*)shmat(shmid_pgt,0,0);
-    for (int i = 0; i < count_pgt; i++) {
-        pageTables[i] = -1;
-    }
 
+    int offset_pgt = systemData[2]*2;
+    
     for (int i = 0; i < systemData[6]; i++) {
-        for (int j = 0; j < systemData[2]*2; j = j+2) {
-            pageTables[i+j] = processes[i].pid;
+        for (int j = 0; j < (offset_pgt)-1; j = j+2) {
+            pageTables[(i*offset_pgt)+j] = processes[i].pid;
+            pageTables[(i*offset_pgt)+j+1] = -1; //this is where the page number goes
         }
     }
 
-    for (int i = 0; i < processes.size(); i++) {
-        cout << pageTables[i] << " ";
-    }
-    cout << endl;
-
-
+    //fault tracker variable. there are enough indexes to record each processes number of faults
     key_t key_flt;
     int shmid_flt;
     int* faultTracker;
-    int count_flt = systemData[6]+1;
+    int count_flt = systemData[6];
     shmid_flt = shmget(key_flt, count_flt*sizeof(int), 0644|IPC_CREAT);
     faultTracker = (int*)shmat(shmid_flt,0,0);
     for (int i = 0; i < count_pgt; i++) {
         faultTracker[i] = 0;
     }
-
+    
+    //a single interger representing the current instruction
     key_t key_instr;
     int shmid_instr;
     int* currentInstruction;
@@ -223,9 +227,14 @@ int main(int argc, char** argv) {
     currentInstruction = (int*)shmat(shmid_instr,0,0);
     *currentInstruction = 0;
 
+    key_t key_kill;
+    int shmid_kill;
+    bool* killSwitch;
+    shmid_kill = shmget(key_kill, sizeof(bool), 0644|IPC_CREAT);
+    killSwitch = (bool*)shmat(shmid_kill,0,0);
+    *killSwitch = false;
+
     //create processes with fork()
-    bool DD_active = true;
-    bool PRA_active = true;
     int pnum = -1;
     int pid = -1;
     for (int i = 0; i < 3; i++) {
@@ -239,8 +248,6 @@ int main(int argc, char** argv) {
     /*pageFaultHandler
         //if there is process to read
             //read in process
-            //convert address to binary
-            //determine what page needs to be used
             //check main memory for required page
             //if(exists) complete process request
             //else 
@@ -255,13 +262,38 @@ int main(int argc, char** argv) {
     if (pid == 0 && pnum == 0) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
+        int requestPid, requestPageNumber;
         for (int i = 0; i < requests.size(); i++)   {
             *currentInstruction = i;
-            requests[i];
-
+            cout << *currentInstruction << " ";
+            requestPid = requests[i].pid; 
+            requestPageNumber = requests[i].pn_dec;
+            if (requestPageNumber == -1) {
+                faultSup << "REQUEST TO TERMINATE PROCESS: " << requestPid << endl;
+                faultSup << endl;
+                continue;
+            }
+            for (int j = 0; j < count_ft; j = j + 2)//search for pid
+            {
+                if(frameTable[j] == requestPid) {//pid exists
+                    if (frameTable[j+1] == requestPageNumber)  {//check to see if corresponding page number matches, if yes then no fault
+                    break;//page is loaded into memory, no fault, break to next request
+                    }
+                }
+                else {
+                    if (j+1 == count_ft-1) {//you're on the last pair of indexes and the thingy didnt exist
+                    faultSup << "FAULT AT REQUEST " << i << endl;
+                    faultSup << "REQUESTING PROCESS: " << requestPid << endl;
+                    faultSup << "REQUIRED PAGE: " << requestPageNumber << endl;
+                    faultSup << endl;
+                    sem_post(PRA_SEMA);//call page replacement process to handle fault
+                    sem_wait(PFH_SEMA);//wait this process
+                    }
+                }
+            }
         }
-        sem_post(PRA_SEMA);
-        sem_wait(PFH_SEMA);
+        *killSwitch == true;// need to make this a shared variable so we can signal to the PRA AND DD one final time to terminate these processes
+        
         return 0;
     }
 
@@ -296,8 +328,17 @@ int main(int argc, char** argv) {
         sem_t *PFH_SEMA = sem_open(PFH_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *DD_SEMA = sem_open(DD_SEMA_NAME, O_CREAT, 0600, 0);
         sem_t *PRA_SEMA = sem_open(PRA_SEMA_NAME, O_CREAT, 0600, 0);
-        sem_wait(PRA_SEMA);
+        //cout << "---PAGE REPLACEMENT ALGORITHM ONLINE---" << endl;
+        //sem_wait(PRA_SEMA);
+        /*
+        while(!*killSwitch){
+        cout << *currentInstruction << " ";
         sem_post(PFH_SEMA);
+        sem_wait(PRA_SEMA);
+        }
+        cout << endl;
+        cout << "PRA TERMINATED..." << endl;
+        */
         return 0;
     }
     return 0;
